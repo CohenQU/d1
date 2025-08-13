@@ -25,7 +25,8 @@ class CTDDataset(GSM8KDataset):
         num_examples=0,
         add_reasoning=True,
         system_prompt=CTD_SYSTEM_PROMPT,
-        subsample=256,
+        dataset_start=0,
+        dataset_end=None,
     ):
         if num_examples > 0:
             warnings.warn("num_examples must be 0 for Countdown dataset. Overriding num_examples to 0.")
@@ -34,8 +35,10 @@ class CTDDataset(GSM8KDataset):
             0,
             add_reasoning,
             system_prompt,
-            subsample,
-        )  # num_examples = always 0
+            dataset_start,
+            dataset_end
+        )
+
 
     def load_test_dataset(self):
         self.dataset = []

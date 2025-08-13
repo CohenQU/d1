@@ -34,11 +34,12 @@ class SudokuDataset(GSM8KDataset):
         num_examples=0,
         add_reasoning=True,
         system_prompt=SUDOKU_SYSTEM_PROMPT,
-        subsample=256,
+        dataset_start=0,
+        dataset_end=None,
     ):
         cur_path = os.path.dirname(os.path.abspath(__file__))
         self.sudoku_file_path = f"{cur_path}/../dataset/4x4_test_sudoku.csv"
-        super().__init__(tokenizer, num_examples, add_reasoning, system_prompt, subsample)
+        super().__init__(tokenizer, num_examples, add_reasoning, system_prompt, dataset_start, dataset_end)
 
     def load_test_dataset(self):
         """Load the Sudoku dataset from the CSV file."""

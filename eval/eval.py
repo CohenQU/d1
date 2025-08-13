@@ -181,6 +181,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24"], default="gsm8k"
     )
+    parser.add_argument("--dataset_start", type=int, default=0)
+    parser.add_argument("--dataset_end", type=int, default=None)
     parser.add_argument("--suffix", type=str, default="")
     parser.add_argument("--checkpoint_path", type=str, default="")
     parser.add_argument("--gen_length", type=int, default=128)
@@ -193,13 +195,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.diffusion_steps = args.gen_length // 2
-    num_evals = {"gsm8k": -1, "math": -1, "countdown": 256, "sudoku": 256}
-
+    
     model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16).to(
         local_rank
     )
-
+    print(f"load model")
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+    print(f"load tokenizer")
 
     if args.checkpoint_path:
         model = PeftModel.from_pretrained(model, args.checkpoint_path, torch_dtype=torch.bfloat16).to(
@@ -214,18 +216,19 @@ if __name__ == "__main__":
 
     dataset = DATASET_MAP[args.dataset](
         tokenizer,
-        subsample=num_evals[args.dataset],
+        dataset_start=args.dataset_start,
+        dataset_end=args.dataset_end,
         num_examples=args.few_shot,
         add_reasoning=True,  # prefill for all models
     )
-
+    print(f"load dataset")
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         sampler=CustomDistributedSampler(dataset, shuffle=False),
         collate_fn=dataset.collate_fn,
     )
-
+    print(f"load dataloader")
     if len(args.checkpoint_path):
         model_name = args.checkpoint_path.split("/")
         model_name = model_name[-2] + "_" + model_name[-1]
@@ -239,7 +242,7 @@ if __name__ == "__main__":
         model_name = model_name + f"_{args.suffix}"
 
     os.makedirs(args.output_dir, exist_ok=True)
-    filename = f"{args.output_dir}/{args.dataset}_{model_name}_{args.gen_length}_{args.diffusion_steps}_{dist.get_rank()}_generations.json"
+    filename = f"{args.output_dir}/{args.dataset}_{args.dataset_start}_{args.dataset_end}_{model_name}_{args.gen_length}_{args.diffusion_steps}_{dist.get_rank()}_generations.json"
     print(f"Saving generations to {filename}")
 
     metrics = evaluate(
@@ -250,7 +253,7 @@ if __name__ == "__main__":
         block_length=args.block_length,
         steps=args.diffusion_steps,
     )
-
+    print(f"evaluate")
     if not args.dont_save:
         with open(filename, "w") as f:
             json.dump(

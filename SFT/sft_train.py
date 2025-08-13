@@ -9,7 +9,13 @@ from sft_trainer import *
 import torch.distributed as dist
 import random
 import numpy as np
+from transformers.trainer_utils import get_last_checkpoint
 
+def get_checkpoint(output_dir):
+    last_checkpoint = None
+    if os.path.isdir(output_dir):
+        last_checkpoint = get_last_checkpoint(output_dir)
+    return last_checkpoint
 
 def init_seed(seed):
     random.seed(seed)
@@ -128,7 +134,14 @@ def train_model(args, tokenizer, model):
     )
 
     # Start training
-    trainer.train()
+    last_checkpoint = get_checkpoint(os.path.join(args.output_dir, args.job_name))
+    if last_checkpoint is not None:
+        print(f"Checkpoint detected, resuming training at {last_checkpoint=}.")
+
+    checkpoint = None
+    if last_checkpoint is not None:
+        checkpoint = last_checkpoint
+    trainer.train(resume_from_checkpoint=checkpoint)
 
 
 if __name__ == "__main__":

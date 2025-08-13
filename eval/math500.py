@@ -30,9 +30,10 @@ class MATH500Dataset(GSM8KDataset):
         num_examples=0,
         add_reasoning=True,
         system_prompt=MATH500_SYSTEM_PROMPT,
-        subsample=-1,
+        dataset_start=0,
+        dataset_end=None,
     ):
-        super().__init__(tokenizer, num_examples, add_reasoning, system_prompt, subsample)
+        super().__init__(tokenizer, num_examples, add_reasoning, system_prompt, dataset_start, dataset_end)
 
     def load_test_dataset(self):
         self.dataset = load_dataset("HuggingFaceH4/MATH-500", split="test")

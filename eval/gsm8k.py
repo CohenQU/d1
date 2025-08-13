@@ -29,7 +29,8 @@ class GSM8KDataset(torch.utils.data.Dataset):
         num_examples=0,
         add_reasoning=True,
         system_prompt=GSM_SYSTEM_PROMPT,
-        subsample=-1,
+        dataset_start=0,
+        dataset_end=None,
     ):
         self.tokenizer = tokenizer
         self.num_examples = num_examples
@@ -38,13 +39,18 @@ class GSM8KDataset(torch.utils.data.Dataset):
         self.load_test_dataset()
         self.create_few_shot_prompt()
 
-        self.subsample = (
-            np.random.choice(len(self.dataset), subsample, replace=False)
-            if subsample != -1
-            else np.arange(len(self.dataset))
-        )
-        print(f"evaluating {len(self.subsample)} examples")
-        assert subsample <= len(self.dataset), "Subsample size is greater than dataset size"
+        # Default dataset_end to full length if None
+        if dataset_end is None:
+            dataset_end = len(self.dataset)
+
+        # Sanity checks
+        assert 0 <= dataset_start < len(self.dataset), "dataset_start out of range"
+        assert 0 < dataset_end <= len(self.dataset), "dataset_end out of range"
+        assert dataset_start < dataset_end, "dataset_start must be less than dataset_end"
+
+        # Create the subset
+        self.subsample = np.arange(dataset_start, dataset_end)
+        print(f"Evaluating {len(self.subsample)} examples: index {dataset_start} to {dataset_end - 1}")
 
     def __len__(self):
         return len(self.subsample)
