@@ -28,13 +28,20 @@ def parse_args():
     parser.add_argument(
         "--model_name", type=str, default="GSAI-ML/LLaDA-8B-Instruct", help="Name of the pretrained model"
     )
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
+    parser.add_argument("--train_data", type=str, default="simplescaling/s1K", help="Path to training data")
     parser.add_argument(
         "--max_length", type=int, default=4096, help="Maximum sequence length for tokenization"
     )
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
+    parser.add_argument("--grad_accum_steps", type=int, default=4, help="Gradient accumulation steps")
     parser.add_argument("--num_epochs", type=int, default=20, help="Number of training epochs")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for the optimizer")
-    parser.add_argument("--grad_accum_steps", type=int, default=4, help="Gradient accumulation steps")
+    parser.add_argument("--eval_strategy", type=str, default="steps", help="Evaluation strategy")
+    parser.add_argument("--eval_steps", type=int, default=100, help="Evaluation steps")
+    parser.add_argument("--save_strategy", type=str, default="steps", help="Save strategy")
+    parser.add_argument("--save_steps", type=int, default=100, help="Save steps")
+    parser.add_argument("--save_total_limit", type=int, default=2, help="Save total limit")
+
     parser.add_argument(
         "--output_dir",
         type=str,
@@ -42,11 +49,11 @@ def parse_args():
         help="Directory to save model checkpoints and logs",
     )
     parser.add_argument("--job_name", type=str, default="llada-s1", help="Job Name")
-    parser.add_argument("--train_data", type=str, default="simplescaling/s1K", help="Path to training data")
+    parser.add_argument("--hub_model_id", type=str, default=None, help="Hub model id")
     parser.add_argument(
         "--debugging", action="store_true", help="Use while debugging model - only disables wandb logging"
     )
-
+    
     return parser.parse_args()
 
 
@@ -63,20 +70,6 @@ def load_model_and_tokenizer(args):
         trust_remote_code=True,
         torch_dtype=torch.bfloat16,
     )
-
-    # LoRA configuration
-    lora_config = LoraConfig(
-        r=128,
-        lora_alpha=256,
-        target_modules=["q_proj", "k_proj", "v_proj"],
-        lora_dropout=0.05,
-        bias="none",
-        task_type=TaskType.CAUSAL_LM,
-    )
-
-    # Applying LoRA model
-    model = get_peft_model(model, lora_config)
-    model = model.to(torch.bfloat16)  # Cast fp32 lora params to bf16
 
     return tokenizer, model
 
@@ -103,11 +96,11 @@ def train_model(args, tokenizer, model):
         num_train_epochs=args.num_epochs,
         per_device_train_batch_size=args.batch_size,
         gradient_accumulation_steps=args.grad_accum_steps,
-        evaluation_strategy="steps",
-        eval_steps=100,
+        evaluation_strategy=args.eval_strategy,
+        eval_steps=args.eval_steps,
         logging_steps=2,
-        save_steps=100,
-        save_total_limit=20,
+        save_steps=args.save_steps,
+        save_total_limit=args.save_total_limit,
         learning_rate=args.learning_rate,
         load_best_model_at_end=True,
         weight_decay=0.1,
@@ -117,6 +110,7 @@ def train_model(args, tokenizer, model):
         remove_unused_columns=False,
     )
 
+
     # Create optimizer and scheduler
     num_train_steps = int(
         len(train_dataset)
@@ -124,6 +118,7 @@ def train_model(args, tokenizer, model):
         / (args.batch_size * args.grad_accum_steps * torch.cuda.device_count())
     )
     # Initialize Trainer with custom dLLMTrainer
+    
     trainer = dLLMTrainer(
         model=model,
         args=training_args,
