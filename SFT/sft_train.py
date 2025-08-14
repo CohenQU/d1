@@ -84,7 +84,7 @@ def load_model_and_tokenizer(args):
 # Dataset loading
 def load_data(args, tokenizer):
     data = load_dataset(args.train_data, split="train")
-    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length, args.with_reasoning)
+    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length, test_split=0.01, with_reasoning=args.with_reasoning)
     print("Train data length: ", len(train_data))
     print("Eval data length: ", len(eval_data))
     train_dataset = dLLMSFTDataset(train_data, tokenizer, args.max_length)
