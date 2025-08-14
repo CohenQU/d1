@@ -59,6 +59,7 @@ def parse_args():
     parser.add_argument(
         "--debugging", action="store_true", help="Use while debugging model - only disables wandb logging"
     )
+    parser.add_argument("--with_reasoning", action="store_true", help="Use while learning reasoning and solution")
     
     return parser.parse_args()
 
@@ -83,7 +84,7 @@ def load_model_and_tokenizer(args):
 # Dataset loading
 def load_data(args, tokenizer):
     data = load_dataset(args.train_data, split="train")
-    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length)
+    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length, args.with_reasoning)
     print("Train data length: ", len(train_data))
     print("Eval data length: ", len(eval_data))
     train_dataset = dLLMSFTDataset(train_data, tokenizer, args.max_length)
