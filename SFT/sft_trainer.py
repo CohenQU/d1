@@ -142,10 +142,8 @@ def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reason
     for i in tqdm(range(len(data)), desc="Preprocessing dataset"):
         question = SYSTEM_PROMPT + "\n\n" + data[i]["question"]
         if with_reasoning:
-            print("With reasoning")
             trajectory = f"<reasoning>{data[i]['reasoning']}</reasoning>\n<answer>{data[i]['solution']}</answer>"
         else:
-            print("No reasoning")
             trajectory = f"<reasoning>\n</reasoning>\n<answer>{data[i]['solution']}</answer>"
         prompt = [{"role": "user", "content": question}]
         response = [{"role": "assistant", "content": trajectory}]
