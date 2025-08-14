@@ -97,24 +97,46 @@ def train_model(args, tokenizer, model):
     train_dataset, eval_dataset = load_data(args, tokenizer)
 
     # Training arguments setup
-    training_args = TrainingArguments(
-        output_dir=os.path.join(args.output_dir, args.job_name),
-        num_train_epochs=args.num_epochs,
-        per_device_train_batch_size=args.batch_size,
-        gradient_accumulation_steps=args.grad_accum_steps,
-        evaluation_strategy=args.eval_strategy,
-        eval_steps=args.eval_steps,
-        logging_steps=2,
-        save_steps=args.save_steps,
-        save_total_limit=args.save_total_limit,
-        learning_rate=args.learning_rate,
-        load_best_model_at_end=True,
-        weight_decay=0.1,
-        max_grad_norm=1.0,
-        bf16=True,
-        report_to="wandb" if not args.debugging else "none",
-        remove_unused_columns=False,
-    )
+    if args.hub_model_id is None:
+        training_args = TrainingArguments(
+            output_dir=os.path.join(args.output_dir, args.job_name),
+            num_train_epochs=args.num_epochs,
+            per_device_train_batch_size=args.batch_size,
+            gradient_accumulation_steps=args.grad_accum_steps,
+            evaluation_strategy=args.eval_strategy,
+            eval_steps=args.eval_steps,
+            logging_steps=2,
+            save_steps=args.save_steps,
+            save_total_limit=args.save_total_limit,
+            learning_rate=args.learning_rate,
+            load_best_model_at_end=True,
+            weight_decay=0.1,
+            max_grad_norm=1.0,
+            bf16=True,
+            report_to="wandb" if not args.debugging else "none",
+            remove_unused_columns=False,
+        )
+    else:
+        training_args = TrainingArguments(
+            output_dir=os.path.join(args.output_dir, args.job_name),
+            num_train_epochs=args.num_epochs,
+            per_device_train_batch_size=args.batch_size,
+            gradient_accumulation_steps=args.grad_accum_steps,
+            evaluation_strategy=args.eval_strategy,
+            eval_steps=args.eval_steps,
+            logging_steps=2,
+            save_steps=args.save_steps,
+            save_total_limit=args.save_total_limit,
+            learning_rate=args.learning_rate,
+            load_best_model_at_end=True,
+            weight_decay=0.1,
+            max_grad_norm=1.0,
+            bf16=True,
+            report_to="wandb" if not args.debugging else "none",
+            remove_unused_columns=False,
+            hub_model_id=args.hub_model_id,
+            push_to_hub=True,
+        )
 
 
     # Create optimizer and scheduler
