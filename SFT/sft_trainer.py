@@ -22,7 +22,15 @@ class dLLMTrainer(Trainer):
         if (self.state.global_step + 1) % self.args.logging_steps == 0:
             self.log({"unscaled_loss": (unscaled_loss.sum() / (labels != -100).sum()).item()})
         loss = unscaled_loss / t
-        loss = loss.sum() / (inputs["input_ids"].numel() - num_prompt_tokens)
+        num_of_tokens = inputs["input_ids"].numel()
+        num_of_labels = labels.numel()
+        num_of_non_masked_tokens = (labels != -100).sum()
+        # print(f"num_of_tokens={num_of_tokens}")
+        # print(f"num_of_labels={num_of_labels}")
+        # print(f"num_of_non_masked_tokens={num_of_non_masked_tokens}")
+        # print(f"num_prompt_tokens={num_prompt_tokens}")
+        # print(f"num_of_non_masked_tokens - num_prompt_tokens={num_of_non_masked_tokens - num_of_non_masked_tokens}")
+        loss = loss.sum() / ((labels != -100).sum())
         return loss if not return_outputs else (loss, outputs)
 
 

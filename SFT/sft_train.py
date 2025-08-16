@@ -136,7 +136,7 @@ def train_model(args, tokenizer, model):
             report_to="wandb" if not args.debugging else "none",
             remove_unused_columns=False,
             hub_model_id=args.hub_model_id,
-            push_to_hub=True,
+            push_to_hub=True
         )
 
 
