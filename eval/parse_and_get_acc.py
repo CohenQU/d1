@@ -389,7 +389,7 @@ def aggregate_results(directory="."):
                     detailed_results,
                     total_effective_tokens,
                 ) = parse_gsm_answers(json_path=json_file)
-            elif "math" in setup_name:
+            elif "math" in setup_name or "amc" in setup_name or "aime" in setup_name:
                 (
                     correct,
                     processed,
@@ -438,4 +438,8 @@ def aggregate_results(directory="."):
 
 
 if __name__ == "__main__":
-    aggregate_results(directory="eval_baselines")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_w_1024")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_wo_1024")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_1024")
+    aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/math_4096")

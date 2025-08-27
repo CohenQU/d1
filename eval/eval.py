@@ -18,12 +18,16 @@ from gsm8k import GSM8KDataset
 from math500 import MATH500Dataset
 from countdown import CTDDataset
 from sudoku import SudokuDataset
+from env_aime2024 import AIME2024Dataset
+from env_amc2023 import AMC2023Dataset
 
 DATASET_MAP = {
     "gsm8k": GSM8KDataset,
     "math": MATH500Dataset,
     "countdown": CTDDataset,
     "sudoku": SudokuDataset,
+    "aime2024": AIME2024Dataset,
+    "amc2023": AMC2023Dataset,
 }
 
 
@@ -176,13 +180,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/data1/shared/LLaDA-8B-Instruct/")
-    parser.add_argument("--few_shot", type=int, default=0)
-    parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--model_name", type=str, default="")
+    parser.add_argument("--model_revision", type=str, default="main")
     parser.add_argument(
-        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24"], default="gsm8k"
+        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023"], default="gsm8k"
     )
     parser.add_argument("--dataset_start", type=int, default=0)
     parser.add_argument("--dataset_end", type=int, default=None)
+    parser.add_argument("--few_shot", type=int, default=0)
+    parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--suffix", type=str, default="")
     parser.add_argument("--checkpoint_path", type=str, default="")
     parser.add_argument("--gen_length", type=int, default=128)
@@ -196,11 +202,9 @@ if __name__ == "__main__":
 
     args.diffusion_steps = args.gen_length // 2
     
-    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16).to(
-        local_rank
-    )
+    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(local_rank)
     print(f"load model")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
     print(f"load tokenizer")
 
     if args.checkpoint_path:
@@ -242,7 +246,7 @@ if __name__ == "__main__":
         model_name = model_name + f"_{args.suffix}"
 
     os.makedirs(args.output_dir, exist_ok=True)
-    filename = f"{args.output_dir}/{args.dataset}_{args.dataset_start}_{args.dataset_end}_{model_name}_{args.gen_length}_{args.diffusion_steps}_{dist.get_rank()}_generations.json"
+    filename = f"{args.output_dir}/{args.model_name}_{args.dataset}_{args.dataset_start}_{args.dataset_end}_{args.batch_size}_{args.gen_length}_{args.block_length}_{args.diffusion_steps}_generations.json"
     print(f"Saving generations to {filename}")
 
     metrics = evaluate(
