@@ -176,8 +176,8 @@ if __name__ == "__main__":
     # Note: This evaluation script saves only model generations. A separate parser is used later to extract
     # predictions and calculate metrics.
 
-    local_rank = setup_ddp()
-
+    # local_rank = setup_ddp()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/data1/shared/LLaDA-8B-Instruct/")
     parser.add_argument("--model_name", type=str, default="")
@@ -202,21 +202,21 @@ if __name__ == "__main__":
 
     args.diffusion_steps = args.gen_length // 2
     
-    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(local_rank)
+    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(device)
     print(f"load model")
     tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
     print(f"load tokenizer")
 
     if args.checkpoint_path:
         model = PeftModel.from_pretrained(model, args.checkpoint_path, torch_dtype=torch.bfloat16).to(
-            local_rank
+            device
         )
 
         if dist.get_world_size() > 1:
             dist.barrier()  # Make sure all processes are ready
             for param in model.parameters():
                 dist.broadcast(param.data, src=0)
-            print(f"Rank {local_rank}: Parameters synchronized")
+            print(f"Rank {device}: Parameters synchronized")
 
     dataset = DATASET_MAP[args.dataset](
         tokenizer,
