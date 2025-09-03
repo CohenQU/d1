@@ -53,98 +53,118 @@ class dLLMSFTDataset(torch.utils.data.Dataset):
         return out
 
 
+from transformers import DefaultDataCollator
+import torch
+
 class dLLMDataCollator(DefaultDataCollator):
     """
-    Block-aware denoising: sample ONE future block and corrupt only that block.
-    Mirrors a single block update at inference time.
+    Block-aware denoising collator:
+      - Samples exactly ONE future block per example (after the prompt).
+      - Masks only that block with Bernoulli(t).
+      - Computes loss only on masked tokens in that block.
+      - Removes 'prompt_lengths' from the returned batch to avoid passing it to the model.
     """
 
     def __init__(self, *args, **kwargs):
         super().__init__()
         self.tokenizer = kwargs["tokenizer"]
         self.mask_token_id = kwargs.get("mask_token_id", self.tokenizer.mask_token_id)
-        assert self.mask_token_id is not None, "Provide a mask_token_id or tokenizer.mask_token_id must be set."
+        assert self.mask_token_id is not None, "Provide mask_token_id or set tokenizer.mask_token_id."
 
-        self.max_length = kwargs.get("max_length", None)
-        # New knobs to mirror inference:
-        self.block_length = kwargs.get("block_length", 32)
-        self.gen_length   = kwargs.get("gen_length", 128)  # region after the prompt we treat as "future"
-        self.eps          = kwargs.get("eps", 1e-3)
+        self.max_length   = kwargs.get("max_length", None)
+        self.block_length = int(kwargs.get("block_length", 32))
+        self.gen_length   = int(kwargs.get("gen_length", 128))
+        self.eps          = float(kwargs.get("eps", 1e-3))
 
-    def _sample_block_bounds(self, prompt_len, seq_len):
-        # future window where blocks live
+    def _sample_block_bounds(self, prompt_len: int, seq_len: int):
+        # future region = [prompt_len, prompt_len + gen_length)
         start_future = prompt_len
         end_future   = min(prompt_len + self.gen_length, seq_len)
-        if end_future - start_future < self.block_length:
-            # fallback: shrink block if sequence is short
-            blk_len = max(1, end_future - start_future)
+        avail = max(0, end_future - start_future)
+        if avail <= 0:
+            # no future region; fallback to an empty block
+            return start_future, start_future, 0
+
+        blk_len = min(self.block_length, avail)
+        max_start = end_future - blk_len
+        if max_start <= start_future:
             blk_start = start_future
-            blk_end   = end_future
-            return blk_start, blk_end, blk_len
+        else:
+            blk_start = int(torch.randint(low=start_future, high=max_start + 1, size=(1,)).item())
+        blk_end = blk_start + blk_len
+        return blk_start, blk_end, blk_len
 
-        # uniform sample of a block index inside the future window
-        max_start = end_future - self.block_length
-        blk_start = torch.randint(low=start_future, high=max_start + 1, size=(1,)).item()
-        blk_end   = blk_start + self.block_length
-        return blk_start, blk_end, self.block_length
-
-    def forward_process_block(self, input_ids, prompt_lengths):
+    def _forward_process_block(self, input_ids: torch.Tensor, prompt_lengths: torch.Tensor):
         """
-        Only corrupt the sampled block. Corruption rate ~ Bernoulli(t) with per-example t \in (eps, 1-eps).
+        Corrupt one future block per example with Bernoulli(t_b).
+        Returns:
+          noisy [B,N], t_full [B,N] (float32, 0 where labels=-100), mask_indices [B,N](bool), labels [B,N]
         """
+        device = input_ids.device
         B, N = input_ids.shape
-        noisy = input_ids.clone()
+
+        noisy  = input_ids.clone()
         labels = input_ids.clone()
 
-        # Per-example t (scalar), broadcast to chosen block later
-        t = torch.rand((B,), device=input_ids.device)
-        t = (1 - self.eps) * t + self.eps  # avoid degenerate 0/1
+        # per-example scalar t in (eps, 1-eps)
+        t_ex = torch.rand((B,), device=device)
+        t_ex = (1.0 - self.eps) * t_ex + self.eps
 
-        # Build masks
-        t_full = torch.zeros((B, N), device=input_ids.device, dtype=input_ids.dtype)  # will store per-token t
-        mask_indices = torch.zeros((B, N), device=input_ids.device, dtype=torch.bool)
+        t_full = torch.zeros((B, N), device=device, dtype=torch.float32)
+        mask_indices = torch.zeros((B, N), device=device, dtype=torch.bool)
 
-        idxs = torch.arange(N, device=input_ids.device).unsqueeze(0)  # [1, N]
+        idxs = torch.arange(N, device=device).unsqueeze(0)  # [1,N]
+
         for b in range(B):
             prompt_len = int(prompt_lengths[b].item())
+
+            # sample block bounds inside future region
             blk_start, blk_end, blk_len = self._sample_block_bounds(prompt_len, N)
+            if blk_len > 0:
+                m = (torch.rand((blk_len,), device=device) < t_ex[b])
+                mask_indices[b, blk_start:blk_end] = m
+                t_full[b, blk_start:blk_end] = t_ex[b]
 
-            # Bernoulli(t_b) only inside the block
-            m = torch.rand((blk_len,), device=input_ids.device) < t[b]
-            mask_indices[b, blk_start:blk_end] = m
-            t_full[b, blk_start:blk_end] = (t[b] * torch.ones((blk_len,), device=input_ids.device)).to(t_full.dtype)
-
-            # NEVER corrupt the prompt region
-            mask_prompt = (idxs < prompt_len)
+            # never corrupt the prompt region
+            mask_prompt = (idxs < prompt_len)  # [1,N] bool
             mask_indices[b] = torch.where(mask_prompt[0], torch.zeros_like(mask_indices[b]), mask_indices[b])
 
-        # Apply corruption on the selected positions only
+            # labels should not compute loss on prompt
+            labels[b, :prompt_len] = -100
+
+        # apply corruption only where selected
         noisy[mask_indices] = self.mask_token_id
 
-        # Labels: compute loss only where we masked
+        # labels: compute loss only where masked
         labels[~mask_indices] = -100
 
-        # Also, mask out loss for the prompt explicitly
-        for b in range(B):
-            prompt_len = int(prompt_lengths[b].item())
-            labels[b, :prompt_len] = -100
+        # ensure t_full is zero where labels are -100 (trainer will index only valid spots anyway)
+        t_full = torch.where(labels != -100, t_full, torch.zeros_like(t_full))
 
         return noisy, t_full, mask_indices, labels
 
-    def __call__(self, batch):
-        batch = super().__call__(batch)
-        input_ids = batch["input_ids"]
-        prompt_lengths = batch.get("prompt_lengths", None)
-        assert prompt_lengths is not None, "Batch must include 'prompt_lengths' to place blocks after prompt."
+    def __call__(self, features):
+        batch = super().__call__(features)
+        # 'prompt_lengths' comes from your preprocessing; use it, then DROP it
+        assert "prompt_lengths" in batch, "Batch must include 'prompt_lengths'."
+        prompt_lengths = batch.pop("prompt_lengths")  # IMPORTANT: remove before returning
 
-        noisy_batch, t_full, mask_indices, labels = self.forward_process_block(input_ids, prompt_lengths)
+        # if HF packed tensors came in as shape [B,1], squeeze to [B]
+        if isinstance(prompt_lengths, torch.Tensor) and prompt_lengths.ndim > 1:
+            prompt_lengths = prompt_lengths.squeeze(-1)
 
-        # package
-        batch["labels"] = labels.long()
+        noisy_batch, t_full, mask_indices, labels = self._forward_process_block(
+            batch["input_ids"], prompt_lengths
+        )
+
         batch["input_ids"] = noisy_batch.long()
-        batch["t"] = t_full  # per-token t; unmasked tokens may be zeros (ignored by labels=-100 anyway)
-        batch["num_prompt_tokens"] = prompt_lengths.sum() if isinstance(prompt_lengths, torch.Tensor) else 0
+        batch["labels"] = labels.long()
+        batch["t"] = t_full  # float32
+        # optionally keep a summary stat, but not needed by the model
+        batch["num_prompt_tokens"] = torch.as_tensor(prompt_lengths.sum()).to(noisy_batch.device)
+
         return batch
+
 
 SYSTEM_PROMPT = """
 Respond in the following format:
