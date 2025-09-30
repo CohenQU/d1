@@ -6,7 +6,7 @@ import random
 from tqdm import tqdm
 import pickle
 import torch.distributed as dist
-
+import json
 
 class dLLMTrainer(Trainer):
     def compute_loss(self, model, inputs, num_items_in_batch=None, return_outputs=False):
@@ -14,25 +14,20 @@ class dLLMTrainer(Trainer):
         Absorbing state diffusion loss computation
         """
         labels, t, num_prompt_tokens = inputs.pop("labels"), inputs.pop("t"), inputs.pop("num_prompt_tokens")
+        # print((labels != -100).sum())
+        # print(inputs["input_ids"].shape)
         outputs = model(**inputs)
         logits = outputs.logits
         unscaled_loss = F.cross_entropy(
             logits.view(-1, logits.shape[-1]), labels.view(-1), reduction="none"
         ).view(logits.shape[0], -1)
-        valid_mask = (labels != -100)
-        if valid_mask.sum() == 0:
-            # Return a proper zero tensor on the correct device/dtype
-            zero_loss = torch.tensor(0.0, device=labels.device, requires_grad=True)
-            return zero_loss if not return_outputs else (zero_loss, outputs)
-        unscaled_loss = unscaled_loss[valid_mask]
-        t = t[valid_mask]
         if (self.state.global_step + 1) % self.args.logging_steps == 0:
-            self.log({"unscaled_loss": (unscaled_loss.sum() / valid_mask.sum()).item()})
+            self.log({"unscaled_loss": (unscaled_loss.sum() / (labels != -100).sum()).item()})
         loss = unscaled_loss / t
         num_of_tokens = inputs["input_ids"].numel()
         num_of_labels = labels.numel()
-        num_of_non_masked_tokens = valid_mask.sum()
-        loss = loss.sum() / (valid_mask.sum())
+        num_of_non_masked_tokens = (labels != -100).sum()
+        loss = loss.sum() / ((labels != -100).sum())
         return loss if not return_outputs else (loss, outputs)
 
 
@@ -87,7 +82,7 @@ class dLLMDataCollator(DefaultDataCollator):
             ), "For dLLM models, pass a mask_token_id or set it equal to tokenizer.mask_token_id"
             self.mask_token_id = kwargs["mask_token_id"]
 
-    def forward_process_block(self, batch, eps=5e-2):
+    def forward_process_block(self, batch, eps=1e-3):
         """
         Apply forward diffusion process only to the current block.
         """
@@ -119,6 +114,8 @@ class dLLMDataCollator(DefaultDataCollator):
                 # Generate random mask for current block
                 block_length = block_end - block_start
                 block_mask = torch.rand(block_length, device=input_ids.device) < t[i]
+                while not block_mask.any():
+                    block_mask = torch.rand(block_length, device=input_ids.device) < t[i]
                 mask_indices[i, block_start:block_end] = block_mask
         
         # Apply masking
@@ -188,7 +185,8 @@ def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.
         train_data, test_data: Preprocessed datasets
     """
     preprocessed_data = []
-    raw_split_idx = int(len(data) * (1 - test_split))
+    # raw_split_idx = int(len(data) * (1 - test_split))
+    raw_split_idx = 128
     test_split_idx = -1
     for i in tqdm(range(len(data)), desc="Preprocessing dataset for block diffusion"):
         if i == raw_split_idx and test_split_idx == -1:
@@ -206,20 +204,23 @@ def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.
         
         # Get the full message
         message_text = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+        parts = message_text.split("<|start_header_id|>assistant<|end_header_id|>")
+        if len(parts) != 2:
+            message_text = "<|start_header_id|>assistant<|end_header_id|>".join(parts[:-1])
         tokenized_message = tokenizer(message_text, return_tensors="pt", max_length=max_length, padding="max_length").input_ids.squeeze(0)
         if tokenized_message.shape[0] > max_length:
             continue
         response_start_idx = message_text.find(trajectory)
-
         # Get the prompt part
         prompt_text = message_text[:response_start_idx]
         tokenized_prompt = tokenizer(prompt_text, return_tensors="pt", add_special_tokens=False)
         prompt_tokens = tokenized_prompt.input_ids.squeeze(0)
         
         # Get the response part
-        response_text = message_text[response_start_idx:]
-        tokenized_response = tokenizer(response_text, return_tensors="pt")
-        response_tokens = tokenized_response.input_ids.squeeze(0)
+        response_tokens = tokenized_message[len(prompt_tokens):]
+        # response_text = message_text[response_start_idx:]
+        # tokenized_response = tokenizer(response_text, return_tensors="pt")
+        # response_tokens = tokenized_response.input_ids.squeeze(0)
 
         
         # Find the actual prompt length in the tokenized message
@@ -271,12 +272,20 @@ def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.
                 "block_idx": block_idx,
                 "total_blocks": num_blocks,
             })
-    
+            # print(f"block_start: {preprocessed_data[-1]['current_block_start']}")
+            # print(f"block_end: {preprocessed_data[-1]['current_block_end']}")
     # Split into train and test using the recorded split index
     if test_split_idx == -1:
         test_split_idx = len(preprocessed_data)
         
     train_data = preprocessed_data[:test_split_idx]
     test_data = preprocessed_data[test_split_idx:]
-    
+
     return train_data, test_data
+
+def to_jsonable(x):
+    if isinstance(x, torch.Tensor):
+        if x.ndim == 0:
+            return x.item()
+        return x.tolist()
+    return x

@@ -124,6 +124,9 @@ def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reason
         prompt = [{"role": "user", "content": question}]
         response = [{"role": "assistant", "content": trajectory}]
         inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+        parts = inputs.split("<|start_header_id|>assistant<|end_header_id|>")
+        if len(parts) != 2:
+            inputs = "<|start_header_id|>assistant<|end_header_id|>".join(parts[:-1])
         prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
         tokenized_input = tokenizer(
             inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"

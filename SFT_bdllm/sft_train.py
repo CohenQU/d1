@@ -35,6 +35,7 @@ def parse_args():
         "--model_name", type=str, default="GSAI-ML/LLaDA-8B-Instruct", help="Name of the pretrained model"
     )
     parser.add_argument("--train_data", type=str, default="simplescaling/s1K", help="Path to training data")
+    parser.add_argument("--block_size", type=int, default=32, help="Block size for training")
     parser.add_argument(
         "--max_length", type=int, default=4096, help="Maximum sequence length for tokenization"
     )
@@ -84,7 +85,7 @@ def load_model_and_tokenizer(args):
 # Dataset loading
 def load_data(args, tokenizer):
     data = load_dataset(args.train_data, split="train")
-    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length, block_size=32, test_split=0.01, with_reasoning=args.with_reasoning)
+    train_data, eval_data = preprocess_dataset(data, tokenizer, args.max_length, block_size=args.block_size, test_split=0.01, with_reasoning=args.with_reasoning)
     print("Train data length: ", len(train_data))
     print("Eval data length: ", len(eval_data))
     train_dataset = dLLMSFTDataset(train_data, tokenizer, args.max_length)
@@ -141,11 +142,17 @@ def train_model(args, tokenizer, model):
 
 
     # Create optimizer and scheduler
+    print(f"torch.cuda.device_count(): {torch.cuda.device_count()}")
+    print(f"args.batch_size: {args.batch_size}")
+    print(f"args.grad_accum_steps: {args.grad_accum_steps}")
+    print(f"len(train_dataset): {len(train_dataset)}")
+    print(f"args.num_epochs: {args.num_epochs}")
     num_train_steps = int(
         len(train_dataset)
         * args.num_epochs
         / (args.batch_size * args.grad_accum_steps * torch.cuda.device_count())
     )
+
     # Initialize Trainer with custom dLLMTrainer
     
     trainer = dLLMTrainer(
