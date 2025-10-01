@@ -20,7 +20,7 @@ from countdown import CTDDataset
 from sudoku import SudokuDataset
 from env_aime2024 import AIME2024Dataset
 from env_amc2023 import AMC2023Dataset
-
+from env_iidtrain import IIDTrainDataset
 DATASET_MAP = {
     "gsm8k": GSM8KDataset,
     "math": MATH500Dataset,
@@ -28,6 +28,7 @@ DATASET_MAP = {
     "sudoku": SudokuDataset,
     "aime2024": AIME2024Dataset,
     "amc2023": AMC2023Dataset,
+    "iidtrain": IIDTrainDataset,
 }
 
 
