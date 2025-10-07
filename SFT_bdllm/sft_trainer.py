@@ -168,7 +168,7 @@ class dLLMDataCollator(DefaultDataCollator):
         
         return batch
 
-def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.01, with_reasoning=True):
+def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.2, with_reasoning=True):
     """
     Preprocess dataset for block diffusion training.
     Each data point is split into multiple training examples, one for each block.
@@ -185,8 +185,9 @@ def preprocess_dataset(data, tokenizer, max_length, block_size=32, test_split=0.
         train_data, test_data: Preprocessed datasets
     """
     preprocessed_data = []
-    # raw_split_idx = int(len(data) * (1 - test_split))
-    raw_split_idx = 128
+    raw_split_idx = int(len(data) * (1 - test_split))
+    if raw_split_idx > 128:
+        raw_split_idx = 128
     test_split_idx = -1
     for i in tqdm(range(len(data)), desc="Preprocessing dataset for block diffusion"):
         if i == raw_split_idx and test_split_idx == -1:
