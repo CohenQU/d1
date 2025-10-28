@@ -389,7 +389,7 @@ def aggregate_results(directory="."):
                     detailed_results,
                     total_effective_tokens,
                 ) = parse_gsm_answers(json_path=json_file)
-            elif "math" in setup_name or "amc" in setup_name or "aime" in setup_name:
+            elif "math" in setup_name or "amc" in setup_name or "aime" in setup_name or "iidtrain" in setup_name:
                 (
                     correct,
                     processed,
@@ -430,11 +430,25 @@ def aggregate_results(directory="."):
     print("-" * 80)
 
     # Data rows
+    steps = []
+    accuracies = []
     row_format = "{:<40} {:>11.2f}% {:>25.2f}"
     for setup, results in sorted(setups.items()):
         print(row_format.format(setup, results["accuracy"], results["avg_effective_tokens"]))
-
+        step = int(setup.split("step")[1].split("_")[0])
+        steps.append(step)
+        accuracies.append(results["accuracy"])
     print("=" * 80)
+
+    # Sort both arrays by increasing order of steps
+    steps, accuracies = zip(*sorted(zip(steps, accuracies)))
+    # Convert back to lists if needed
+    steps = list(steps)
+    accuracies = list(accuracies)
+
+    # Print results in order of steps
+    print(f"\"step\": {steps}")
+    print("\"accuracy\":" + "["+", ".join(f"{acc:.2f}" for acc in accuracies).strip()+"]")
 
 
 if __name__ == "__main__":
@@ -442,4 +456,5 @@ if __name__ == "__main__":
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_w_1024")
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_wo_1024")
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_1024")
-    aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/math_4096")
+    # aggregate_results(directory="/u/yqu1/workspace/projects/flexible-ordering/output/with-reasoning/math")
+    aggregate_results(directory="/u/yqu1/workspace/projects/flexible-ordering/output/64-with-reasoning-math")

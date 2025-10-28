@@ -20,6 +20,7 @@ from countdown import CTDDataset
 from sudoku import SudokuDataset
 from env_aime2024 import AIME2024Dataset
 from env_amc2023 import AMC2023Dataset
+from env_iidtrain import IIDTrainDataset
 
 DATASET_MAP = {
     "gsm8k": GSM8KDataset,
@@ -28,6 +29,7 @@ DATASET_MAP = {
     "sudoku": SudokuDataset,
     "aime2024": AIME2024Dataset,
     "amc2023": AMC2023Dataset,
+    "iidtrain": IIDTrainDataset,
 }
 
 
@@ -178,12 +180,13 @@ if __name__ == "__main__":
 
     # local_rank = setup_ddp()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/data1/shared/LLaDA-8B-Instruct/")
     parser.add_argument("--model_name", type=str, default="")
     parser.add_argument("--model_revision", type=str, default="main")
     parser.add_argument(
-        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023"], default="gsm8k"
+        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023", "iidtrain"], default="gsm8k"
     )
     parser.add_argument("--dataset_start", type=int, default=0)
     parser.add_argument("--dataset_end", type=int, default=None)
@@ -204,7 +207,8 @@ if __name__ == "__main__":
     
     model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(device)
     print(f"load model")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
+    # tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
+    tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-8B-Instruct")
     print(f"load tokenizer")
 
     if args.checkpoint_path:
