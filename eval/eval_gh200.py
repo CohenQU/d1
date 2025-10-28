@@ -13,7 +13,7 @@ from tqdm import tqdm
 from transformers import AutoTokenizer, AutoModel
 from peft import PeftModel
 
-from generate import generate
+from generate_gh200 import generate
 from gsm8k import GSM8KDataset
 from math500 import MATH500Dataset
 from countdown import CTDDataset
@@ -68,8 +68,8 @@ def evaluate(
     wall_times = []
     all_generations = []
     device = model.device
-
-    for batch in tqdm(dataloader, disable=(dist.get_rank() != 0)):
+    print(f"device: {device}")
+    for batch in tqdm(dataloader):
         start_time = time.time()
         input_ids = batch["input_ids"].to(device)
         gt_answers = batch["answers"]
@@ -103,15 +103,6 @@ def evaluate(
         wall_times.append(time.time() - start_time)
 
         # Print individual results
-        if dist.get_rank() == 0:
-            idx = random.randint(0, len(questions) - 1)
-            print(f"Question: {questions[idx]}")
-            print("-" * 50)
-            print("Generation:")
-            print(generated_texts[idx])
-            print("-" * 50)
-            print(f"Ground truth: {gt_answers[idx]}")
-
     avg_wall_time = sum(wall_times) / len(wall_times)
     metrics = {
         "wall_time": avg_wall_time,
@@ -141,16 +132,8 @@ class CustomDistributedSampler(DistributedSampler):
         seed=0,
         drop_last=False,
     ) -> None:
-        if num_replicas is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            num_replicas = dist.get_world_size()
-        if rank is None:
-            if not dist.is_available():
-                raise RuntimeError("Requires distributed package to be available")
-            rank = dist.get_rank()
-        if rank >= num_replicas or rank < 0:
-            raise ValueError(f"Invalid rank {rank}, rank should be in the interval [0, {num_replicas - 1}]")
+
+        num_replicas, rank = 1, 0
 
         self.dataset = dataset
         self.num_replicas = num_replicas
@@ -178,14 +161,15 @@ if __name__ == "__main__":
     # Note: This evaluation script saves only model generations. A separate parser is used later to extract
     # predictions and calculate metrics.
 
-    local_rank = setup_ddp()
-
+    # local_rank = setup_ddp()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device outside: {device}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/data1/shared/LLaDA-8B-Instruct/")
     parser.add_argument("--model_name", type=str, default="")
     parser.add_argument("--model_revision", type=str, default="main")
     parser.add_argument(
-        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023"], default="gsm8k"
+        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023", "iidtrain"], default="gsm8k"
     )
     parser.add_argument("--dataset_start", type=int, default=0)
     parser.add_argument("--dataset_end", type=int, default=None)
@@ -204,7 +188,7 @@ if __name__ == "__main__":
 
     args.diffusion_steps = args.gen_length // 2
     
-    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(local_rank)
+    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(device)
     print(f"load model")
     # tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
     tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-8B-Instruct")
@@ -212,14 +196,14 @@ if __name__ == "__main__":
 
     if args.checkpoint_path:
         model = PeftModel.from_pretrained(model, args.checkpoint_path, torch_dtype=torch.bfloat16).to(
-            local_rank
+            device
         )
 
         if dist.get_world_size() > 1:
             dist.barrier()  # Make sure all processes are ready
             for param in model.parameters():
                 dist.broadcast(param.data, src=0)
-            print(f"Rank {local_rank}: Parameters synchronized")
+            print(f"Rank {device}: Parameters synchronized")
 
     dataset = DATASET_MAP[args.dataset](
         tokenizer,

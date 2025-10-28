@@ -1,0 +1,234 @@
+import torch
+import torch.nn.functional as F
+from transformers import Trainer
+from transformers import DefaultDataCollator
+import random
+from tqdm import tqdm
+import pickle
+import torch.distributed as dist
+
+
+class dLLMTrainer(Trainer):
+    def compute_loss(self, model, inputs, num_items_in_batch=None, return_outputs=False):
+        """
+        Absorbing state diffusion loss computation
+        """
+        labels, t, num_prompt_tokens = inputs.pop("labels"), inputs.pop("t"), inputs.pop("num_prompt_tokens")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        unscaled_loss = F.cross_entropy(
+            logits.view(-1, logits.shape[-1]), labels.view(-1), reduction="none"
+        ).view(logits.shape[0], -1)
+        if (self.state.global_step + 1) % self.args.logging_steps == 0:
+            self.log({"unscaled_loss": (unscaled_loss.sum() / (labels != -100).sum()).item()})
+        loss = unscaled_loss / t
+        num_of_tokens = inputs["input_ids"].numel()
+        num_of_labels = labels.numel()
+        num_of_non_masked_tokens = (labels != -100).sum()
+        loss = loss.sum() / ((labels != -100).sum())
+        return loss if not return_outputs else (loss, outputs)
+
+
+class dLLMSFTDataset(torch.utils.data.Dataset):
+    """
+    Similar to AR datasets, except in inference, we keep the timsteps fixed
+    """
+
+    def __init__(self, data, tokenizer, max_length, eval=False):
+        super().__init__()
+        self.data = data
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.eval = eval
+        if self.eval:
+            self.t = torch.linspace(0, 1, len(self.data))
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        out = self.data[idx]
+        if self.eval:
+            out["t"] = self.t[idx]
+        return out
+
+
+from transformers import DefaultDataCollator
+import torch
+
+class dLLMDataCollator(DefaultDataCollator):
+    """
+    Block-aware denoising collator:
+      - Samples exactly ONE future block per example (after the prompt).
+      - Masks only that block with Bernoulli(t).
+      - Computes loss only on masked tokens in that block.
+      - Removes 'prompt_lengths' from the returned batch to avoid passing it to the model.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__()
+        self.tokenizer = kwargs["tokenizer"]
+        self.mask_token_id = kwargs.get("mask_token_id", self.tokenizer.mask_token_id)
+        assert self.mask_token_id is not None, "Provide mask_token_id or set tokenizer.mask_token_id."
+
+        self.max_length   = kwargs.get("max_length", None)
+        self.block_length = int(kwargs.get("block_length", 32))
+        self.gen_length   = int(kwargs.get("gen_length", 128))
+        self.eps          = float(kwargs.get("eps", 1e-3))
+
+    def _sample_block_bounds(self, prompt_len: int, seq_len: int):
+        # future region = [prompt_len, prompt_len + gen_length)
+        start_future = prompt_len
+        end_future   = min(prompt_len + self.gen_length, seq_len)
+        avail = max(0, end_future - start_future)
+        if avail <= 0:
+            # no future region; fallback to an empty block
+            return start_future, start_future, 0
+
+        blk_len = min(self.block_length, avail)
+        max_start = end_future - blk_len
+        if max_start <= start_future:
+            blk_start = start_future
+        else:
+            blk_start = int(torch.randint(low=start_future, high=max_start + 1, size=(1,)).item())
+        blk_end = blk_start + blk_len
+        return blk_start, blk_end, blk_len
+
+    def _forward_process_block(self, input_ids: torch.Tensor, prompt_lengths: torch.Tensor):
+        """
+        Corrupt one future block per example with Bernoulli(t_b).
+        Returns:
+          noisy [B,N], t_full [B,N] (float32, 0 where labels=-100), mask_indices [B,N](bool), labels [B,N]
+        """
+        device = input_ids.device
+        B, N = input_ids.shape
+
+        noisy  = input_ids.clone()
+        labels = input_ids.clone()
+
+        # per-example scalar t in (eps, 1-eps)
+        t_ex = torch.rand((B,), device=device)
+        t_ex = (1.0 - self.eps) * t_ex + self.eps
+
+        t_full = torch.zeros((B, N), device=device, dtype=torch.float32)
+        mask_indices = torch.zeros((B, N), device=device, dtype=torch.bool)
+
+        idxs = torch.arange(N, device=device).unsqueeze(0)  # [1,N]
+
+        for b in range(B):
+            prompt_len = int(prompt_lengths[b].item())
+
+            # sample block bounds inside future region
+            blk_start, blk_end, blk_len = self._sample_block_bounds(prompt_len, N)
+            if blk_len > 0:
+                m = (torch.rand((blk_len,), device=device) < t_ex[b])
+                mask_indices[b, blk_start:blk_end] = m
+                t_full[b, blk_start:blk_end] = t_ex[b]
+
+            # never corrupt the prompt region
+            mask_prompt = (idxs < prompt_len)  # [1,N] bool
+            mask_indices[b] = torch.where(mask_prompt[0], torch.zeros_like(mask_indices[b]), mask_indices[b])
+
+            # labels should not compute loss on prompt
+            labels[b, :prompt_len] = -100
+
+        # apply corruption only where selected
+        noisy[mask_indices] = self.mask_token_id
+
+        # labels: compute loss only where masked
+        labels[~mask_indices] = -100
+
+        # ensure t_full is zero where labels are -100 (trainer will index only valid spots anyway)
+        t_full = torch.where(labels != -100, t_full, torch.zeros_like(t_full))
+
+        return noisy, t_full, mask_indices, labels
+
+    def __call__(self, features):
+        batch = super().__call__(features)
+        # 'prompt_lengths' comes from your preprocessing; use it, then DROP it
+        assert "prompt_lengths" in batch, "Batch must include 'prompt_lengths'."
+        prompt_lengths = batch.pop("prompt_lengths")  # IMPORTANT: remove before returning
+
+        # if HF packed tensors came in as shape [B,1], squeeze to [B]
+        if isinstance(prompt_lengths, torch.Tensor) and prompt_lengths.ndim > 1:
+            prompt_lengths = prompt_lengths.squeeze(-1)
+
+        noisy_batch, t_full, mask_indices, labels = self._forward_process_block(
+            batch["input_ids"], prompt_lengths
+        )
+
+        batch["input_ids"] = noisy_batch.long()
+        batch["labels"] = labels.long()
+        batch["t"] = t_full  # float32
+        # optionally keep a summary stat, but not needed by the model
+        batch["num_prompt_tokens"] = torch.as_tensor(prompt_lengths.sum()).to(noisy_batch.device)
+
+        return batch
+
+
+SYSTEM_PROMPT = """
+Respond in the following format:
+<reasoning>
+Your reasoning here
+</reasoning>
+<answer>
+...
+</answer>
+"""
+
+
+# def preprocess_dataset(data, tokenizer, max_length, test_split=0.01):
+#     preprocessed_data = []
+#     for i in tqdm(range(len(data)), desc="Preprocessing dataset"):
+#         question = SYSTEM_PROMPT + "\n\n" + data[i]["question"]
+#         trajectory = f"<reasoning>{data[i]['thinking_trajectories'][0]}</reasoning>\n<answer>{data[i]['attempt']}</answer>"
+#         prompt = [{"role": "user", "content": question}]
+#         response = [{"role": "assistant", "content": trajectory}]
+#         inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+#         prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
+#         tokenized_input = tokenizer(
+#             inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"
+#         ).input_ids.squeeze(0)
+#         num_tokens = tokenized_input.shape[0]
+#         tokenized_prompt = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length)
+#         preprocessed_data.append(
+#             {
+#                 "input_ids": tokenized_input,
+#                 "prompt_lengths": tokenized_prompt.attention_mask.sum(-1),
+#             }
+#         )
+
+#     random.shuffle(preprocessed_data)
+#     test_data = preprocessed_data[: int(len(preprocessed_data) * test_split)]
+#     train_data = preprocessed_data[int(len(preprocessed_data) * test_split) :]
+#     return train_data, test_data
+
+def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reasoning=True):
+    preprocessed_data = []
+    for i in tqdm(range(len(data)), desc="Preprocessing dataset"):
+        question = SYSTEM_PROMPT + "\n\n" + data[i]["question"]
+        if with_reasoning:
+            trajectory = f"<reasoning>{data[i]['reasoning']}</reasoning>\n<answer>{data[i]['solution']}</answer>"
+        else:
+            trajectory = f"<reasoning>\n</reasoning>\n<answer>{data[i]['solution']}</answer>"
+        prompt = [{"role": "user", "content": question}]
+        response = [{"role": "assistant", "content": trajectory}]
+        inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+        prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
+        tokenized_input = tokenizer(
+            inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"
+        ).input_ids.squeeze(0)
+        num_tokens = tokenized_input.shape[0]
+        tokenized_prompt = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length)
+        preprocessed_data.append(
+            {
+                "input_ids": tokenized_input,
+                "prompt_lengths": tokenized_prompt.attention_mask.sum(-1),
+            }
+        )
+
+    # random.shuffle(preprocessed_data)
+    print(int(len(preprocessed_data) * test_split))
+    test_data = preprocessed_data[: int(len(preprocessed_data) * test_split)]
+    train_data = preprocessed_data[int(len(preprocessed_data) * test_split) :]
+    return train_data, test_data

@@ -178,14 +178,15 @@ if __name__ == "__main__":
     # Note: This evaluation script saves only model generations. A separate parser is used later to extract
     # predictions and calculate metrics.
 
-    local_rank = setup_ddp()
-
+    # local_rank = setup_ddp()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"device: {device}")
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", type=str, default="/data1/shared/LLaDA-8B-Instruct/")
     parser.add_argument("--model_name", type=str, default="")
     parser.add_argument("--model_revision", type=str, default="main")
     parser.add_argument(
-        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023"], default="gsm8k"
+        "--dataset", type=str, choices=["gsm8k", "math", "countdown", "sudoku", "game24", "aime2024", "amc2023", "iidtrain"], default="gsm8k"
     )
     parser.add_argument("--dataset_start", type=int, default=0)
     parser.add_argument("--dataset_end", type=int, default=None)
@@ -204,7 +205,7 @@ if __name__ == "__main__":
 
     args.diffusion_steps = args.gen_length // 2
     
-    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(local_rank)
+    model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(device)
     print(f"load model")
     # tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
     tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-8B-Instruct")
@@ -212,14 +213,14 @@ if __name__ == "__main__":
 
     if args.checkpoint_path:
         model = PeftModel.from_pretrained(model, args.checkpoint_path, torch_dtype=torch.bfloat16).to(
-            local_rank
+            device
         )
 
         if dist.get_world_size() > 1:
             dist.barrier()  # Make sure all processes are ready
             for param in model.parameters():
                 dist.broadcast(param.data, src=0)
-            print(f"Rank {local_rank}: Parameters synchronized")
+            print(f"Rank {device}: Parameters synchronized")
 
     dataset = DATASET_MAP[args.dataset](
         tokenizer,

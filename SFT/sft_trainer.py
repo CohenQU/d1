@@ -124,6 +124,9 @@ def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reason
         prompt = [{"role": "user", "content": question}]
         response = [{"role": "assistant", "content": trajectory}]
         inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+        parts = inputs.split("<|start_header_id|>assistant<|end_header_id|>")
+        if len(parts) != 2:
+            inputs = "<|start_header_id|>assistant<|end_header_id|>".join(parts[:-1])
         prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
         tokenized_input = tokenizer(
             inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"
@@ -137,8 +140,35 @@ def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reason
             }
         )
 
-    # random.shuffle(preprocessed_data)
     print(int(len(preprocessed_data) * test_split))
     test_data = preprocessed_data[: int(len(preprocessed_data) * test_split)]
     train_data = preprocessed_data[int(len(preprocessed_data) * test_split) :]
     return train_data, test_data
+
+
+# def preprocess_dataset(data, tokenizer, max_length, test_split=0.01):
+#     preprocessed_data = []
+#     for i in tqdm(range(len(data)), desc="Preprocessing dataset"):
+#         question = SYSTEM_PROMPT + "\n\n" + data[i]["question"]
+#         trajectory = f"<reasoning>{data[i]['thinking_trajectories'][0]}</reasoning>\n<answer>{data[i]['attempt']}</answer>"
+#         prompt = [{"role": "user", "content": question}]
+#         response = [{"role": "assistant", "content": trajectory}]
+#         inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
+#         prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
+#         tokenized_input = tokenizer(
+#             inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"
+#         ).input_ids.squeeze(0)
+#         num_tokens = tokenized_input.shape[0]
+#         tokenized_prompt = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length)
+#         preprocessed_data.append(
+#             {
+#                 "input_ids": tokenized_input,
+#                 "prompt_lengths": tokenized_prompt.attention_mask.sum(-1),
+#             }
+#         )
+
+#     random.shuffle(preprocessed_data)
+#     test_data = preprocessed_data[: int(len(preprocessed_data) * test_split)]
+#     train_data = preprocessed_data[int(len(preprocessed_data) * test_split) :]
+#     return train_data, test_data
+>>>>>>> d72f50fdd8ac0f589e035260ce33f7ac5bd5a136
