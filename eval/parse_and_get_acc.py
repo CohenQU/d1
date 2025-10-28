@@ -442,4 +442,8 @@ if __name__ == "__main__":
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_w_1024")
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/LLaDA-8B-Instruct_wo_1024")
     # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_1024")
-    aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/math_4096")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_1024")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_4096")
+    # aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs/amc2023_4096_A100")
+    aggregate_results(directory="/home/yuxiaoq/projects/flexible-ordering-dllm/outputs")
+    

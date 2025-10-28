@@ -25,11 +25,6 @@ class dLLMTrainer(Trainer):
         num_of_tokens = inputs["input_ids"].numel()
         num_of_labels = labels.numel()
         num_of_non_masked_tokens = (labels != -100).sum()
-        # print(f"num_of_tokens={num_of_tokens}")
-        # print(f"num_of_labels={num_of_labels}")
-        # print(f"num_of_non_masked_tokens={num_of_non_masked_tokens}")
-        # print(f"num_prompt_tokens={num_prompt_tokens}")
-        # print(f"num_of_non_masked_tokens - num_prompt_tokens={num_of_non_masked_tokens - num_of_non_masked_tokens}")
         loss = loss.sum() / ((labels != -100).sum())
         return loss if not return_outputs else (loss, outputs)
 
@@ -117,33 +112,6 @@ Your reasoning here
 ...
 </answer>
 """
-
-
-# def preprocess_dataset(data, tokenizer, max_length, test_split=0.01):
-#     preprocessed_data = []
-#     for i in tqdm(range(len(data)), desc="Preprocessing dataset"):
-#         question = SYSTEM_PROMPT + "\n\n" + data[i]["question"]
-#         trajectory = f"<reasoning>{data[i]['thinking_trajectories'][0]}</reasoning>\n<answer>{data[i]['attempt']}</answer>"
-#         prompt = [{"role": "user", "content": question}]
-#         response = [{"role": "assistant", "content": trajectory}]
-#         inputs = tokenizer.apply_chat_template(prompt + response, tokenize=False)
-#         prompt = tokenizer.apply_chat_template(prompt, tokenize=False) + "\n"
-#         tokenized_input = tokenizer(
-#             inputs, return_tensors="pt", truncation=True, max_length=max_length, padding="max_length"
-#         ).input_ids.squeeze(0)
-#         num_tokens = tokenized_input.shape[0]
-#         tokenized_prompt = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=max_length)
-#         preprocessed_data.append(
-#             {
-#                 "input_ids": tokenized_input,
-#                 "prompt_lengths": tokenized_prompt.attention_mask.sum(-1),
-#             }
-#         )
-
-#     random.shuffle(preprocessed_data)
-#     test_data = preprocessed_data[: int(len(preprocessed_data) * test_split)]
-#     train_data = preprocessed_data[int(len(preprocessed_data) * test_split) :]
-#     return train_data, test_data
 
 def preprocess_dataset(data, tokenizer, max_length, test_split=0.01, with_reasoning=True):
     preprocessed_data = []

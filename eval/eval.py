@@ -204,7 +204,8 @@ if __name__ == "__main__":
     
     model = AutoModel.from_pretrained(args.model_path, trust_remote_code=True, torch_dtype=torch.bfloat16, revision=args.model_revision).to(local_rank)
     print(f"load model")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
+    # tokenizer = AutoTokenizer.from_pretrained(args.model_path, trust_remote_code=True, revision=args.model_revision)
+    tokenizer = AutoTokenizer.from_pretrained("GSAI-ML/LLaDA-8B-Instruct", trust_remote_code=True)
     print(f"load tokenizer")
 
     if args.checkpoint_path:
